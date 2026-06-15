@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(npx vite build)",
+      "Bash(rm server.js)",
+      "Bash(rm public/index.html)",
+      "Bash(rmdir public)",
+      "mcp__Claude_Preview__preview_start",
+      "PowerShell(Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -in 3000,3001,4000,5173,8080 } | Select-Object LocalPort, OwningProcess)",
+      "PowerShell(Stop-Process -Id 18552 -Force -Confirm:$false)",
+      "PowerShell(\"stopped\")",
+      "PowerShell(Start-Process -FilePath \"node\" -ArgumentList \"server.js\" -WorkingDirectory \"C:\\\\Users\\\\robert.vinzant\\\\Desktop\\\\it-order-tracker-master\\\\server\" -WindowStyle Hidden; Start-Sleep -Seconds 2; \\(Invoke-WebRequest -Uri \"http://localhost:3000/api/recipient/Tami\" -UseBasicParsing\\).StatusCode)"
+    ]
+  }
+}

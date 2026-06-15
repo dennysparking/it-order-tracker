@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dev.js"],
+      "port": 5173,
+      "env": {
+        "PORT": "3000"
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  it-orders:
+    build: .
+    container_name: it-order-tracker
+    restart: unless-stopped
+    ports:
+      - "4130:3000"
+    volumes:
+      - order_data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - JWT_SECRET=b6d7a98e0de63cab0f6367bc3b238f968dee6e58c6d8fec416ab3ddc78f05f6a
+      - DB_PATH=/app/data/orders.db
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 256m
+
+volumes:
+  order_data:
+    driver: local
