@@ -41,6 +41,7 @@ export default function SettingsModal({ settings, user, categories = [], departm
         <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
           {tabBtn("general", "General")}
           {tabBtn("email", "Email Template")}
+          {tabBtn("recipients", "Recipients")}
           {user.role === "admin" && tabBtn("smtp", "SMTP / Notifications")}
           {user.role === "admin" && tabBtn("categories", "Categories")}
           {user.role === "admin" && tabBtn("departments", "Departments")}
@@ -170,6 +171,27 @@ export default function SettingsModal({ settings, user, categories = [], departm
           </div>
         )}
 
+        {tab === "recipients" && (() => {
+          const FIXED = ["Tami", "Desiree", "Stacey"];
+          let recipientEmails = {"Tami.Hockemeyer@copperworks.com": "Tami", "Desiree.Elett@copperworks.com": "Desiree", "Stacey.Garton@copperworks.com": "Stacey"};
+          try { recipientEmails = JSON.parse(values.recipient_emails || "{}"); } catch {}
+          const setEmail = (name, email) => set("recipient_emails", JSON.stringify({ ...recipientEmails, [name]: email }));
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                Set email addresses for each recipient. These will be added to the CC field when sending order emails.
+              </p>
+              {FIXED.map(name => (
+                <div key={name}>
+                  <label style={S.label}>{name}</label>
+                  <input style={S.input} type="email" value={recipientEmails[name] || ""}
+                    onChange={e => setEmail(name, e.target.value)}
+                    placeholder={`${name.toLowerCase()}@company.com`} />
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {tab === "smtp" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -212,12 +234,6 @@ export default function SettingsModal({ settings, user, categories = [], departm
                 <label style={S.label}>Notification Recipient</label>
                 <input style={S.input} value={values.notification_email || ""} onChange={e => set("notification_email", e.target.value)}
                   placeholder="you@company.com" />
-              </div>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={S.label}>IT Alert Emails (delivery notifications)</label>
-                <input style={S.input} value={values.it_alert_emails || ""} onChange={e => set("it_alert_emails", e.target.value)}
-                  placeholder="robert.vinzant@copperworks.com, nick.kemerley@copperworks.com" />
-                <p style={{ fontSize: 11, color: "var(--text-dimmed)", marginTop: 4 }}>Comma-separated. Emailed when a recipient marks an order as delivered.</p>
               </div>
             </div>
             <div style={{ borderTop: "1px solid var(--border-primary)", paddingTop: 14, marginTop: 4 }}>
