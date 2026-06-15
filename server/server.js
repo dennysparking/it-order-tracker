@@ -311,6 +311,33 @@ function statusToBooleans(status) {
   };
 }
 
+// Roll a bulk order's parent status up from its sub-items' statuses.
+// The parent reflects the least-advanced item, but surfaces "partially_*" when items are split
+// across the shipped/delivered boundaries (e.g. some shipped, some not → Partially Shipped).
+function rollupBulkStatus(statuses) {
+  if (!statuses.length) return null;
+  const idxs = statuses.map(s => { const i = STAGE_KEYS.indexOf(s); return i < 0 ? 0 : i; });
+  const min = Math.min(...idxs), max = Math.max(...idxs);
+  const deliveredIdx = STAGE_KEYS.indexOf("delivered");
+  const shippedIdx = STAGE_KEYS.indexOf("shipped");
+  if (min === max) return STAGE_KEYS[min];          // all items at the same stage
+  if (min >= deliveredIdx) return "delivered";      // everything delivered (or completed)
+  if (max >= deliveredIdx) return "partially_delivered";
+  if (max >= shippedIdx) return "partially_shipped";
+  return STAGE_KEYS[min];                            // spread within early stages → least advanced
+}
+
+function recomputeBulkParentStatus(orderId) {
+  const items = db.prepare("SELECT status FROM order_items WHERE order_id = ?").all(orderId);
+  if (!items.length) return;
+  const status = rollupBulkStatus(items.map(it => it.status));
+  if (!status) return;
+  const b = statusToBooleans(status);
+  const now = new Date().toISOString().slice(0, 10);
+  db.prepare("UPDATE orders SET status=?, email_sent=?, email_replied=?, followup=?, delivered=?, last_updated=? WHERE id=?")
+    .run(status, b.email_sent, b.email_replied, b.followup, b.delivered, now, orderId);
+}
+
 // ── Audit Log Helper ──
 function logAudit(userId, username, action, entityType, entityId, changes) {
   db.prepare(
@@ -1179,6 +1206,14 @@ app.get("/api/dashboard/stats", authenticate, (req, res) => {
     GROUP BY department ORDER BY total DESC
   `).all();
 
+  // Spending by vendor
+  const spentByVendor = db.prepare(`
+    SELECT COALESCE(NULLIF(TRIM(vendor), ''), 'Unknown') as vendor,
+      ROUND(SUM(unit_cost * quantity), 2) as total
+    FROM orders WHERE unit_cost IS NOT NULL
+    GROUP BY LOWER(TRIM(COALESCE(vendor, ''))) ORDER BY total DESC
+  `).all();
+
   // Orders by requester
   const byRequester = db.prepare(`
     SELECT COALESCE(requested_by, 'Unspecified') as requester, COUNT(*) as count
@@ -1206,8 +1241,31 @@ app.get("/api/dashboard/stats", authenticate, (req, res) => {
     byMonth, byCategory, byUser,
     totalSpent, spentByCategory, spentByMonth,
     deliveryTimeTrend, overdueOrders,
-    byDepartment, spentByDepartment, byRequester, recurringOrders, highestOrderCost,
+    byDepartment, spentByDepartment, spentByVendor, byRequester, recurringOrders, highestOrderCost,
   });
+});
+
+// Spend report as CSV (one row per order with cost) — for finance / procurement.
+app.get("/api/dashboard/spend-report.csv", authenticate, (req, res) => {
+  const rows = db.prepare(`
+    SELECT date, name, COALESCE(vendor,'') as vendor, COALESCE(category,'') as category,
+      COALESCE(department,'') as department, COALESCE(requested_by,'') as requested_by,
+      quantity, unit_cost, ROUND(unit_cost * quantity, 2) as total_cost, status
+    FROM orders WHERE unit_cost IS NOT NULL ORDER BY date DESC
+  `).all();
+  const esc = (v) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ["Date", "Item", "Vendor", "Category", "Department", "Requested By", "Qty", "Unit Cost", "Total Cost", "Status"];
+  const lines = [header.join(",")];
+  for (const r of rows) {
+    lines.push([r.date, r.name, r.vendor, r.category, r.department, r.requested_by, r.quantity, r.unit_cost, r.total_cost, r.status].map(esc).join(","));
+  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="spend-report-${stamp}.csv"`);
+  res.send("﻿" + lines.join("\r\n")); // BOM so Excel reads UTF-8 correctly
 });
 
 // ── Email Templates API ──
@@ -1505,6 +1563,7 @@ app.post("/api/orders/:id/items", authenticate, (req, res) => {
   ).run(req.params.id, name.trim(), link || null, image_url || null, quantity || 1, unit_cost != null ? unit_cost : null, notes || null);
   // Mark parent as bulk
   db.prepare("UPDATE orders SET is_bulk = 1 WHERE id = ?").run(req.params.id);
+  recomputeBulkParentStatus(req.params.id);
   const item = db.prepare("SELECT * FROM order_items WHERE id = ?").get(result.lastInsertRowid);
   res.json(item);
 });
@@ -1516,6 +1575,7 @@ app.put("/api/orders/items/:itemId", authenticate, (req, res) => {
   db.prepare("UPDATE order_items SET name=?, link=?, image_url=?, quantity=?, unit_cost=?, notes=?, status=? WHERE id=?")
     .run(name || item.name, link || null, image_url || null, quantity || 1,
       unit_cost != null ? unit_cost : null, notes || null, status || item.status, req.params.itemId);
+  recomputeBulkParentStatus(item.order_id); // keep the parent's rolled-up status in sync
   const updated = db.prepare("SELECT * FROM order_items WHERE id = ?").get(req.params.itemId);
   res.json(updated);
 });
@@ -1524,9 +1584,10 @@ app.delete("/api/orders/items/:itemId", authenticate, (req, res) => {
   const item = db.prepare("SELECT * FROM order_items WHERE id = ?").get(req.params.itemId);
   if (!item) return res.status(404).json({ error: "Item not found" });
   db.prepare("DELETE FROM order_items WHERE id = ?").run(req.params.itemId);
-  // If no items left, un-mark as bulk
+  // If no items left, un-mark as bulk; otherwise re-roll the parent status from the remaining items
   const remaining = db.prepare("SELECT COUNT(*) as c FROM order_items WHERE order_id = ?").get(item.order_id).c;
   if (remaining === 0) db.prepare("UPDATE orders SET is_bulk = 0 WHERE id = ?").run(item.order_id);
+  else recomputeBulkParentStatus(item.order_id);
   res.json({ success: true });
 });
 

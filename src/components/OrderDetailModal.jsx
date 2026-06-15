@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { STAGES, DELIVERED_STATUSES } from '../constants';
 import { S } from '../styles';
-import { getCurrentStage, daysSince, formatDate, formatCurrency, isValidUrl, buildMailtoLink } from '../utils';
+import { getCurrentStage, daysSince, formatDate, formatCurrency, isValidUrl, buildMailtoLink, rollupStatus } from '../utils';
 import { api } from '../api';
 import ProductImage from './ProductImage';
 
@@ -65,7 +65,7 @@ function CommentBody({ text, onViewPhoto }) {
   );
 }
 
-export default function OrderDetailModal({ order, settings, user, onAdvance, onRevert, onDelete, onEdit, onArchive, onUnarchive, onClose }) {
+export default function OrderDetailModal({ order, settings, user, onAdvance, onRevert, onDelete, onEdit, onArchive, onUnarchive, onReorder, onRefresh, onClose }) {
   const [attachments, setAttachments] = useState([]);
   const [activeTab, setActiveTab] = useState("details");
   const [activity, setActivity] = useState([]);
@@ -73,8 +73,10 @@ export default function OrderDetailModal({ order, settings, user, onAdvance, onR
   const [activityLoading, setActivityLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [lightbox, setLightbox] = useState(null);
-  const stage = getCurrentStage(order);
-  const isDelivered = DELIVERED_STATUSES.has(order.status);
+  // For bulk orders the displayed status is rolled up live from the sub-items.
+  const effectiveOrder = (order.is_bulk && items.length) ? { ...order, status: rollupStatus(items) } : order;
+  const stage = getCurrentStage(effectiveOrder);
+  const isDelivered = DELIVERED_STATUSES.has(effectiveOrder.status);
 
   useEffect(() => {
     api.get(`/api/orders/${order.id}/attachments`).then(a => a && setAttachments(a));
@@ -104,6 +106,19 @@ export default function OrderDetailModal({ order, settings, user, onAdvance, onR
     const res = await api.del(`/api/comments/${commentId}`);
     if (res?.success) {
       setActivity(prev => prev.filter(a => a.commentId !== commentId));
+    }
+  };
+
+  // Advance/revert a single sub-item; the server re-rolls the parent status, and onRefresh
+  // updates the board behind the modal.
+  const handleItemStage = async (item, dir) => {
+    const idx = STAGES.findIndex(s => s.key === item.status);
+    const next = (idx < 0 ? 0 : idx) + dir;
+    if (next < 0 || next >= STAGES.length) return;
+    const res = await api.put(`/api/orders/items/${item.id}`, { ...item, status: STAGES[next].key });
+    if (res) {
+      setItems(prev => prev.map(it => it.id === item.id ? res : it));
+      onRefresh?.();
     }
   };
 
@@ -276,33 +291,45 @@ export default function OrderDetailModal({ order, settings, user, onAdvance, onR
             {items.length === 0 ? (
               <p style={{ ...S.mono, fontSize: 12, color: "var(--text-dimmed)", textAlign: "center", padding: 20 }}>No sub-items yet.</p>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {items.map(item => {
-                  const itemStage = STAGES.findIndex(s => s.key === item.status) || 0;
-                  const itemStageInfo = STAGES[itemStage >= 0 ? itemStage : 0];
-                  return (
-                    <div key={item.id} style={{ padding: "10px 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text-primary)" }}>{item.name}</span>
-                          {isValidUrl(item.link) && (
-                            <a href={item.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: "#60a5fa", marginLeft: 8 }}>↗</a>
-                          )}
-                          <div style={{ ...S.mono, fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
-                            Qty: {item.quantity || 1}
-                            {item.unit_cost != null && <span> · {formatCurrency(item.unit_cost * (item.quantity || 1))}</span>}
+              <>
+                <p style={{ ...S.mono, fontSize: 10, color: "var(--text-muted)", marginBottom: 10 }}>
+                  Update each item's status below — the order's overall status updates automatically.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {items.map(item => {
+                    const i = STAGES.findIndex(s => s.key === item.status);
+                    const itemStage = i >= 0 ? i : 0;
+                    const itemStageInfo = STAGES[itemStage];
+                    return (
+                      <div key={item.id} style={{ padding: "10px 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text-primary)" }}>{item.name}</span>
+                            {isValidUrl(item.link) && (
+                              <a href={item.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: "#60a5fa", marginLeft: 8 }}>↗</a>
+                            )}
+                            <div style={{ ...S.mono, fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+                              Qty: {item.quantity || 1}
+                              {item.unit_cost != null && <span> · {formatCurrency(item.unit_cost * (item.quantity || 1))}</span>}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                            <button onClick={() => handleItemStage(item, -1)} disabled={itemStage <= 0} title="Move back"
+                              style={{ background: "transparent", border: "none", color: "var(--text-dimmed)", cursor: itemStage > 0 ? "pointer" : "default", fontSize: 15, padding: "0 2px", lineHeight: 1, opacity: itemStage > 0 ? 1 : 0.3 }}>‹</button>
+                            <span style={{
+                              ...S.mono, fontSize: 10, borderRadius: 999, padding: "2px 8px",
+                              background: itemStageInfo.color + "22", color: itemStageInfo.color,
+                              border: `1px solid ${itemStageInfo.color}44`, whiteSpace: "nowrap", minWidth: 92, textAlign: "center",
+                            }}>{itemStageInfo.label}</span>
+                            <button onClick={() => handleItemStage(item, 1)} disabled={itemStage >= STAGES.length - 1} title="Move forward"
+                              style={{ background: "transparent", border: "none", color: "var(--text-dimmed)", cursor: itemStage < STAGES.length - 1 ? "pointer" : "default", fontSize: 15, padding: "0 2px", lineHeight: 1, opacity: itemStage < STAGES.length - 1 ? 1 : 0.3 }}>›</button>
                           </div>
                         </div>
-                        <span style={{
-                          ...S.mono, fontSize: 10, borderRadius: 999, padding: "2px 8px",
-                          background: itemStageInfo.color + "22", color: itemStageInfo.color,
-                          border: `1px solid ${itemStageInfo.color}44`, whiteSpace: "nowrap", flexShrink: 0,
-                        }}>{itemStageInfo.label}</span>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </div>
         )}
@@ -357,13 +384,14 @@ export default function OrderDetailModal({ order, settings, user, onAdvance, onR
 
         {/* Action buttons */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", borderTop: "1px solid var(--border-primary)", paddingTop: 16, marginTop: 8 }}>
-          {stage < STAGES.length - 1 && stage >= 0 && (
+          {/* For bulk orders the status is driven by the sub-items (Items tab), so hide parent advance/revert */}
+          {!order.is_bulk && stage < STAGES.length - 1 && stage >= 0 && (
             <button onClick={() => { onAdvance(order.id); onClose(); }} style={{
               ...S.mono, background: STAGES[stage + 1].color, color: "#fff", border: "none",
               borderRadius: 6, padding: "7px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer",
             }}>{"\u2192"} {STAGES[stage + 1].label}</button>
           )}
-          {stage > 0 && (
+          {!order.is_bulk && stage > 0 && (
             <button onClick={() => { onRevert(order.id); onClose(); }} style={{
               ...S.mono, background: "var(--bg-input)", color: "var(--text-muted)",
               border: "1px solid var(--border-input)", borderRadius: 6,
@@ -375,6 +403,13 @@ export default function OrderDetailModal({ order, settings, user, onAdvance, onR
             border: "1px solid var(--border-primary)", borderRadius: 6,
             padding: "7px 14px", fontSize: 11, cursor: "pointer",
           }}>{"\u270E"} Edit</button>
+          {onReorder && (
+            <button onClick={() => { onReorder(order); onClose(); }} style={{
+              ...S.mono, background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+              border: "1px solid var(--border-primary)", borderRadius: 6,
+              padding: "7px 14px", fontSize: 11, cursor: "pointer",
+            }}>{"\u21BB"} Reorder</button>
+          )}
           <button onClick={() => window.print()} style={{
             ...S.mono, background: "var(--bg-tertiary)", color: "var(--text-secondary)",
             border: "1px solid var(--border-primary)", borderRadius: 6,

@@ -55,6 +55,7 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editOrder, setEditOrder] = useState(null);
+  const [prefill, setPrefill] = useState(null);
   const [viewOrder, setViewOrder] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -165,7 +166,17 @@ export default function App() {
   }).length;
   const totalDelivered = orders.filter(o => DELIVERED_STATUSES.has(o.status)).length;
 
-  const handleEdit = (o) => { setEditOrder(o); setShowForm(true); };
+  const handleEdit = (o) => { setEditOrder(o); setPrefill(null); setShowForm(true); };
+  // Reorder: open a fresh order form pre-filled from a past order (new order, not an edit).
+  const handleReorder = (o) => {
+    setEditOrder(null);
+    setPrefill({
+      name: o.name, link: o.link, image_url: o.image_url, quantity: o.quantity,
+      unit_cost: o.unit_cost, category: o.category, department: o.department,
+      vendor: o.vendor, requested_by: o.requested_by, notes: o.notes,
+    });
+    setShowForm(true);
+  };
   const handleView = (o) => { setViewOrder(o); };
 
   const handleSave = async (order) => {
@@ -325,12 +336,13 @@ export default function App() {
 
       {!loading && orders.length === 0 && <EmptyState />}
 
-      {showForm && <OrderFormModal editOrder={editOrder} settings={settings} categories={categories} departments={departments}
-        onSave={handleSave} onClose={() => { setShowForm(false); setEditOrder(null); }} />}
+      {showForm && <OrderFormModal editOrder={editOrder} prefill={prefill} settings={settings} categories={categories} departments={departments}
+        onSave={handleSave} onClose={() => { setShowForm(false); setEditOrder(null); setPrefill(null); }} />}
 
       {viewOrder && <OrderDetailModal order={viewOrder} settings={settings} user={user}
         onAdvance={advanceOrder} onRevert={revertOrder} onDelete={handleDelete}
         onEdit={handleEdit} onArchive={handleArchive} onUnarchive={handleUnarchive}
+        onReorder={handleReorder} onRefresh={loadOrders}
         onClose={() => setViewOrder(null)} />}
 
       {showSettings && <SettingsModal settings={settings} user={user} categories={categories} departments={departments}

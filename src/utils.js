@@ -14,6 +14,21 @@ export function getCurrentStage(order) {
   return idx >= 0 ? idx : 0;
 }
 
+// Roll a bulk order's parent status up from its sub-items (mirrors the server logic so the
+// detail modal can reflect changes instantly without a round-trip).
+export function rollupStatus(items) {
+  if (!items || !items.length) return null;
+  const keys = STAGES.map(s => s.key);
+  const idxs = items.map(it => { const i = keys.indexOf(it.status); return i < 0 ? 0 : i; });
+  const min = Math.min(...idxs), max = Math.max(...idxs);
+  const dIdx = keys.indexOf("delivered"), shIdx = keys.indexOf("shipped");
+  if (min === max) return keys[min];
+  if (min >= dIdx) return "delivered";
+  if (max >= dIdx) return "partially_delivered";
+  if (max >= shIdx) return "partially_shipped";
+  return keys[min];
+}
+
 export function isValidUrl(str) {
   if (!str) return false;
   try {

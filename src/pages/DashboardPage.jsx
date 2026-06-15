@@ -70,6 +70,11 @@ export default function DashboardPage({ onBack }) {
           borderRadius: 7, padding: "7px 12px", fontSize: 12, color: "var(--text-muted)", cursor: "pointer",
         }}>{"\u2190"} Back</button>
         <h2 style={{ ...S.mono, fontSize: 18, fontWeight: 700 }}>Dashboard</h2>
+        <div style={{ flex: 1 }} />
+        <a href="/api/dashboard/spend-report.csv" style={{
+          ...S.mono, background: "var(--accent)", color: "#fff", textDecoration: "none",
+          borderRadius: 7, padding: "8px 14px", fontSize: 12, fontWeight: 600,
+        }}>{"↓"} Export spend report (CSV)</a>
       </div>
 
       {/* Order Stat Cards */}
@@ -139,6 +144,13 @@ export default function DashboardPage({ onBack }) {
           <div style={chartCard}>
             <h3 style={chartTitle}>Spending by Department</h3>
             <BarChart data={stats.spentByDepartment} labelKey="department" valueKey="total" color="#f59e0b" formatValue={v => formatCurrency(v)} />
+          </div>
+        )}
+
+        {stats?.spentByVendor?.length > 0 && (
+          <div style={chartCard}>
+            <h3 style={chartTitle}>Spending by Vendor</h3>
+            <BarChart data={stats.spentByVendor} labelKey="vendor" valueKey="total" color="#f59e0b" formatValue={v => formatCurrency(v)} />
           </div>
         )}
 

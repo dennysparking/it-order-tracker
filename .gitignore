@@ -4,10 +4,13 @@ node_modules/
 # Build output
 dist/
 
-# Database
+# Database (incl. server/data) + transient WAL/SHM and backups
 data/*.db
 data/*.db-wal
 data/*.db-shm
+server/data/*.db-wal
+server/data/*.db-shm
+server/backups/
 
 # Environment
 .env

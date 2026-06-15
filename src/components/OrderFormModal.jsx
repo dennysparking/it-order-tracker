@@ -3,17 +3,19 @@ import { api } from '../api';
 import { S } from '../styles';
 import { buildMailtoLink } from '../utils';
 
-export default function OrderFormModal({ editOrder, settings, categories = [], departments = [], onSave, onClose }) {
-  const [name, setName] = useState(editOrder?.name || "");
-  const [link, setLink] = useState(editOrder?.link || "");
-  const [imageUrl, setImageUrl] = useState(editOrder?.image_url || "");
-  const [quantity, setQuantity] = useState(editOrder?.quantity || 1);
-  const [unitCost, setUnitCost] = useState(editOrder?.unit_cost ?? "");
-  const [category, setCategory] = useState(editOrder?.category || "");
-  const [department, setDepartment] = useState(editOrder?.department || "");
-  const [vendor, setVendor] = useState(editOrder?.vendor || "");
-  const [requestedBy, setRequestedBy] = useState(editOrder?.requested_by || "");
-  const [notes, setNotes] = useState(editOrder?.notes || "");
+export default function OrderFormModal({ editOrder, prefill, settings, categories = [], departments = [], onSave, onClose }) {
+  // Field values come from the order being edited, or a reorder prefill, or blank for a new order.
+  const init = editOrder || prefill || {};
+  const [name, setName] = useState(init.name || "");
+  const [link, setLink] = useState(init.link || "");
+  const [imageUrl, setImageUrl] = useState(init.image_url || "");
+  const [quantity, setQuantity] = useState(init.quantity || 1);
+  const [unitCost, setUnitCost] = useState(init.unit_cost ?? "");
+  const [category, setCategory] = useState(init.category || "");
+  const [department, setDepartment] = useState(init.department || "");
+  const [vendor, setVendor] = useState(init.vendor || "");
+  const [requestedBy, setRequestedBy] = useState(init.requested_by || "");
+  const [notes, setNotes] = useState(init.notes || "");
 
   const TO_RECIPIENTS = [
     { name: "Tami",    email: "Tami.Hockemeyer@copperworks.com" },
@@ -130,7 +132,7 @@ export default function OrderFormModal({ editOrder, settings, categories = [], d
     <div style={S.modal} onClick={onClose}>
       <div className="modal-box" style={S.modalBox} onClick={e => e.stopPropagation()}>
         <h2 style={{ ...S.mono, fontSize: 20, fontWeight: 700, marginBottom: 24 }}>
-          {editOrder ? "Edit Order" : "New Order"}
+          {editOrder ? "Edit Order" : prefill ? "Reorder" : "New Order"}
         </h2>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
