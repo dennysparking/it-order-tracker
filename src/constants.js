@@ -11,6 +11,27 @@ export const STAGES = [
 // Which statuses count as "delivered" for reporting / archive eligibility
 export const DELIVERED_STATUSES = new Set(["delivered", "completed"]);
 
+// Order email recipients (shared by the order form and the follow-up button)
+export const TO_RECIPIENTS = [
+  { name: "Tami",    email: "Tami.Hockemeyer@copperworks.com" },
+  { name: "Desiree", email: "Desiree.Elett@copperworks.com" },
+  { name: "Stacey",  email: "Stacey.Garton@copperworks.com" },
+];
+export const CC_RECIPIENTS = [
+  { name: "Nick",   email: "Nick.Kemerley@copperworks.com" },
+  { name: "Daniel", email: "Daniel.Estrada@copperworks.com" },
+  { name: "Rob",    email: "robert.vinzant@copperworks.com" },
+  { name: "Dennis", email: "Dennis.Ratliff@copperworks.com" },
+];
+
+// Turn a stored "Tami, Desiree" names string into email addresses. Unknown parts are assumed
+// to already be raw emails (entered via the "Other" option).
+export function resolveRecipientEmails(namesStr, pool) {
+  if (!namesStr) return [];
+  return namesStr.split(",").map(s => s.trim()).filter(Boolean)
+    .map(part => pool.find(p => p.name === part)?.email || part);
+}
+
 // Sync boolean flags from status (used server-side; mirrored here for reference)
 export function statusToBooleans(status) {
   const after = (key) => {

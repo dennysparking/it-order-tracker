@@ -1,9 +1,10 @@
 import { useState, useCallback, useRef } from 'react';
 import { api } from '../api';
 import { S } from '../styles';
-import { buildMailtoLink } from '../utils';
+import { buildMailtoLink, copyRichText } from '../utils';
+import { TO_RECIPIENTS, CC_RECIPIENTS } from '../constants';
 
-export default function OrderFormModal({ editOrder, prefill, settings, categories = [], departments = [], onSave, onClose }) {
+export default function OrderFormModal({ editOrder, prefill, settings, categories = [], departments = [], onSave, onClose, toast }) {
   // Field values come from the order being edited, or a reorder prefill, or blank for a new order.
   const init = editOrder || prefill || {};
   const [name, setName] = useState(init.name || "");
@@ -16,18 +17,6 @@ export default function OrderFormModal({ editOrder, prefill, settings, categorie
   const [vendor, setVendor] = useState(init.vendor || "");
   const [requestedBy, setRequestedBy] = useState(init.requested_by || "");
   const [notes, setNotes] = useState(init.notes || "");
-
-  const TO_RECIPIENTS = [
-    { name: "Tami",    email: "Tami.Hockemeyer@copperworks.com" },
-    { name: "Desiree", email: "Desiree.Elett@copperworks.com" },
-    { name: "Stacey",  email: "Stacey.Garton@copperworks.com" },
-  ];
-  const CC_RECIPIENTS = [
-    { name: "Nick",   email: "Nick.Kemerley@copperworks.com" },
-    { name: "Daniel", email: "Daniel.Estrada@copperworks.com" },
-    { name: "Rob",    email: "robert.vinzant@copperworks.com" },
-    { name: "Dennis", email: "Dennis.Ratliff@copperworks.com" },
-  ];
 
   const parseNames = (val, pool) => {
     if (!val) return { known: [], other: "" };
@@ -92,7 +81,9 @@ export default function OrderFormModal({ editOrder, prefill, settings, categorie
   const handleSave = async () => {
     if (!name.trim()) return;
     const confirmToken = editOrder?.confirm_token || (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
-    const confirmLink = `${window.location.origin}/confirm/${confirmToken}`;
+    // Use the configured App URL so the link works from other machines, not just localhost.
+    const base = (settings.app_base_url || window.location.origin).replace(/\/$/, "");
+    const confirmLink = `${base}/confirm/${confirmToken}`;
     const order = {
       ...(editOrder || {}),
       name: name.trim(), link: link.trim(), image_url: imageUrl,
@@ -116,12 +107,16 @@ export default function OrderFormModal({ editOrder, prefill, settings, categorie
       if (otherChecked && otherRecipient.trim()) toEmails.push(otherRecipient.trim());
       const ccEmails = selectedCc.map(n => CC_RECIPIENTS.find(r => r.name === n)?.email).filter(Boolean);
       if (otherCcChecked && otherCcRecipient.trim()) ccEmails.push(otherCcRecipient.trim());
-      const mailto = buildMailtoLink(order, toEmails.join(";"), settings.email_template_subject, settings.email_template_body, ccEmails, confirmLink);
+      const email = buildMailtoLink(order, toEmails.join(";"), settings.email_template_subject, settings.email_template_body, ccEmails, confirmLink);
+      // mailto bodies are plaintext-only and new Outlook won't auto-linkify them, so also
+      // put a formatted version with clickable links on the clipboard to paste into the draft.
+      await copyRichText(email.html, email.text);
       const a = document.createElement("a");
-      a.href = mailto;
+      a.href = email.mailto;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      toast?.("Outlook draft opened — click in the body, then Ctrl+A and Ctrl+V to paste the version with clickable links.");
     }
 
     onSave(order);

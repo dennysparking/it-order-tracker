@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { STAGES, DELIVERED_STATUSES } from '../constants';
+import { STAGES, DELIVERED_STATUSES, TO_RECIPIENTS, CC_RECIPIENTS, resolveRecipientEmails } from '../constants';
 import { S } from '../styles';
-import { getCurrentStage, daysSince, formatDate, formatCurrency, isValidUrl, buildMailtoLink, rollupStatus } from '../utils';
+import { getCurrentStage, daysSince, formatDate, formatCurrency, isValidUrl, buildMailtoLink, buildFollowupMailtoLink, copyRichText, rollupStatus } from '../utils';
 import { api } from '../api';
 import ProductImage from './ProductImage';
 
@@ -65,7 +65,7 @@ function CommentBody({ text, onViewPhoto }) {
   );
 }
 
-export default function OrderDetailModal({ order, settings, user, onAdvance, onRevert, onDelete, onEdit, onArchive, onUnarchive, onReorder, onRefresh, onClose }) {
+export default function OrderDetailModal({ order, settings, user, onAdvance, onRevert, onDelete, onEdit, onArchive, onUnarchive, onReorder, onRefresh, onClose, toast }) {
   const [attachments, setAttachments] = useState([]);
   const [activeTab, setActiveTab] = useState("details");
   const [activity, setActivity] = useState([]);
@@ -107,6 +107,21 @@ export default function OrderDetailModal({ order, settings, user, onAdvance, onR
     if (res?.success) {
       setActivity(prev => prev.filter(a => a.commentId !== commentId));
     }
+  };
+
+  // Open a pre-addressed follow-up email to this order's recipients (manual nudge).
+  const handleFollowup = async () => {
+    const toEmails = resolveRecipientEmails(order.recipients, TO_RECIPIENTS);
+    const ccEmails = resolveRecipientEmails(order.cc_recipients, CC_RECIPIENTS);
+    const email = buildFollowupMailtoLink(order, toEmails.join(";"), ccEmails);
+    // Copy the clickable-link version for pasting, since mailto bodies stay plaintext in new Outlook.
+    await copyRichText(email.html, email.text);
+    const a = document.createElement("a");
+    a.href = email.mailto;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast?.("Outlook draft opened — click in the body, then Ctrl+A and Ctrl+V to paste the version with clickable links.");
   };
 
   // Advance/revert a single sub-item; the server re-rolls the parent status, and onRefresh
@@ -409,6 +424,13 @@ export default function OrderDetailModal({ order, settings, user, onAdvance, onR
               border: "1px solid var(--border-primary)", borderRadius: 6,
               padding: "7px 14px", fontSize: 11, cursor: "pointer",
             }}>{"\u21BB"} Reorder</button>
+          )}
+          {!isDelivered && (
+            <button onClick={handleFollowup} title="Open a follow-up email to the recipients" style={{
+              ...S.mono, background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+              border: "1px solid var(--border-primary)", borderRadius: 6,
+              padding: "7px 14px", fontSize: 11, cursor: "pointer",
+            }}>{"\u2709"} Follow up</button>
           )}
           <button onClick={() => window.print()} style={{
             ...S.mono, background: "var(--bg-tertiary)", color: "var(--text-secondary)",

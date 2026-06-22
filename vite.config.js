@@ -6,6 +6,9 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    // Allow access by the machine's network name (not just IP). Desktop Outlook linkifies
+    // hostname URLs in emails but leaves raw IP:port URLs as plain text.
+    allowedHosts: ['.lafarga.sdi.local', 'lp027953'],
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

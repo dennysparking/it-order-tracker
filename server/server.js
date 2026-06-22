@@ -84,7 +84,7 @@ ensureSetting.run("followup_reminder_days", "3");
 ensureSetting.run("followup_cron_hour", "8");
 
 // ── Schema Migrations ──
-const CURRENT_SCHEMA_VERSION = 16;
+const CURRENT_SCHEMA_VERSION = 17;
 const currentVersion = parseInt(
   db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get()?.value || "0"
 );
@@ -295,8 +295,16 @@ if (currentVersion < 16) {
   db.exec(`UPDATE order_items SET status = 'sent_to_purchaser' WHERE status = 'requested' OR status IS NULL`);
 }
 
+if (currentVersion < 17) {
+  // Who actually received the package (captured on the shared receiving page).
+  const cols = db.pragma("table_info(orders)").map(c => c.name);
+  if (!cols.includes("received_by")) {
+    db.exec(`ALTER TABLE orders ADD COLUMN received_by TEXT DEFAULT NULL`);
+  }
+}
+
 db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', ?)")
-  .run("16");
+  .run("17");
 
 // ── Status Helpers ──
 const STAGE_KEYS = ["sent_to_purchaser","ordered","partially_shipped","shipped","partially_delivered","delivered","completed"];
@@ -464,13 +472,9 @@ function runFollowupCheck() {
   }
 }
 
-const cronHour = parseInt(
-  db.prepare("SELECT value FROM settings WHERE key = 'followup_cron_hour'").get()?.value || "8"
-);
-cron.schedule(`0 ${cronHour} * * *`, () => {
-  console.log("Running follow-up reminder check...");
-  runFollowupCheck();
-});
+// Automatic daily follow-up reminders are disabled — follow-ups are now sent manually via the
+// "Follow up" button on an order. The runFollowupCheck function and the admin
+// /api/settings/run-followup-check endpoint remain for optional manual/batch use.
 
 // ── Database Backup ──
 // Online backup of the SQLite database to a dated file. Runs nightly + shortly after startup.
@@ -1384,22 +1388,31 @@ app.delete("/api/attachments/:id", authenticate, (req, res) => {
 
 // ── Settings API ──
 
+// Keys that live in the `settings` table but are managed elsewhere: categories and
+// departments have their own dedicated endpoints, and schema_version is server-owned.
+// They must never travel through the generic /api/settings round-trip, or a stale
+// snapshot held by the Settings modal can silently overwrite them with the defaults.
+const RESERVED_SETTING_KEYS = new Set(["categories", "departments", "schema_version"]);
+
 app.get("/api/settings", authenticate, (req, res) => {
   const rows = db.prepare("SELECT * FROM settings").all();
   const settings = {};
-  rows.forEach(r => settings[r.key] = r.value);
+  rows.forEach(r => { if (!RESERVED_SETTING_KEYS.has(r.key)) settings[r.key] = r.value; });
   res.json(settings);
 });
 
 app.put("/api/settings", authenticate, requireAdmin, (req, res) => {
   const upsert = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
-  const transaction = db.transaction((entries) => {
-    for (const [key, value] of entries) {
+  // Drop reserved keys so a generic settings save can't clobber categories/departments
+  // or the schema version.
+  const entries = Object.entries(req.body).filter(([key]) => !RESERVED_SETTING_KEYS.has(key));
+  const transaction = db.transaction((rows) => {
+    for (const [key, value] of rows) {
       upsert.run(key, String(value));
     }
   });
-  transaction(Object.entries(req.body));
-  logAudit(req.user.id, req.user.username, "update", "settings", null, req.body);
+  transaction(entries);
+  logAudit(req.user.id, req.user.username, "update", "settings", null, Object.fromEntries(entries));
   res.json({ success: true });
 });
 
@@ -2044,6 +2057,20 @@ app.get("/api/confirm/:token", (req, res) => {
   res.json({ ...updated, email_sent: !!updated.email_sent, email_replied: !!updated.email_replied, followup: !!updated.followup, delivered: !!updated.delivered, alreadyConfirmed: !!order.confirmed_at });
 });
 
+// Shared receiving page — orders that have actually been ordered (not still "Sent to Purchaser"),
+// so anyone covering the desk can receive any incoming item.
+app.get("/api/receiving", (req, res) => {
+  const orders = db.prepare(
+    "SELECT * FROM orders WHERE archived = 0 AND status IS NOT NULL AND status != 'sent_to_purchaser' ORDER BY delivered ASC, created_at DESC"
+  ).all();
+  res.json(orders.map(o => ({
+    ...o,
+    email_sent: !!o.email_sent, email_replied: !!o.email_replied,
+    followup: !!o.followup, delivered: !!o.delivered,
+  })));
+});
+
+// Kept for backward compatibility with any existing per-name links/bookmarks.
 app.get("/api/recipient/:name", (req, res) => {
   const name = decodeURIComponent(req.params.name).trim().toLowerCase();
   // Normalize the stored comma-separated list and match the name as a whole entry, case-insensitively
@@ -2062,36 +2089,41 @@ app.post("/api/recipient/deliver/:orderId", upload.single("photo"), (req, res) =
   if (!order) return res.status(404).json({ error: "Order not found" });
 
   const now = new Date().toISOString().slice(0, 10);
+  const receivedBy = (req.body?.received_by || "").trim() || null; // who actually accepted the package
   const bools = statusToBooleans("delivered");
-  db.prepare("UPDATE orders SET status = 'delivered', email_sent = ?, email_replied = ?, followup = ?, delivered = ?, last_updated = ? WHERE id = ?")
-    .run(bools.email_sent, bools.email_replied, bools.followup, bools.delivered, now, order.id);
-  logAudit(null, "recipient", "deliver", "order", order.id, { name: order.name, recipients: order.recipients });
+  db.prepare("UPDATE orders SET status = 'delivered', email_sent = ?, email_replied = ?, followup = ?, delivered = ?, received_by = ?, last_updated = ? WHERE id = ?")
+    .run(bools.email_sent, bools.email_replied, bools.followup, bools.delivered, receivedBy, now, order.id);
+  logAudit(null, "recipient", "deliver", "order", order.id, { name: order.name, received_by: receivedBy });
 
   // Optional photo upload — must be an image (rejected otherwise so we don't accept arbitrary files anonymously)
-  let photoId = null;
+  let photoId = null, photoBuffer = null, photoMime = null, photoName = null;
   if (req.file && req.file.mimetype && req.file.mimetype.startsWith("image/")) {
-    const filename = req.file.originalname || `delivery-${Date.now()}.jpg`;
+    photoName = req.file.originalname || `delivery-${Date.now()}.jpg`;
+    photoBuffer = req.file.buffer;
+    photoMime = req.file.mimetype;
     const result = db.prepare(
       "INSERT INTO attachments (order_id, filename, mime_type, size, data, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(order.id, filename, req.file.mimetype, req.file.size, req.file.buffer, order.recipients || "recipient");
+    ).run(order.id, photoName, photoMime, req.file.size, photoBuffer, order.recipients || "recipient");
     photoId = result.lastInsertRowid;
   }
 
+  const who = receivedBy || "Someone";
   const note = req.body?.note;
-  if ((note && note.trim()) || photoId) {
+  if ((note && note.trim()) || photoId || receivedBy) {
     const parts = [];
+    if (receivedBy) parts.push(`Received by: ${receivedBy}.`);
     if (note && note.trim()) parts.push(note.trim());
     if (photoId) parts.push(`[photo attached: /api/recipient/photo/${photoId}]`);
-    const noteText = `Delivery note from ${order.recipients || "recipient"}: ${parts.join(" ")}`;
+    const noteText = `Delivery note: ${parts.join(" ")}`;
     db.prepare("INSERT INTO comments (order_id, user_id, username, text) VALUES (?, NULL, ?, ?)")
-      .run(order.id, order.recipients || "recipient", noteText);
+      .run(order.id, receivedBy || "recipient", noteText);
   }
 
   // Notify all IT users in-app
   const users = db.prepare("SELECT id FROM users").all();
   for (const u of users) {
     createNotification(u.id, "order_delivered", `Delivered: ${order.name}`,
-      `${order.recipients || "Recipient"} marked "${order.name}" as delivered.`, "order", order.id);
+      `${who} marked "${order.name}" as delivered.`, "order", order.id);
   }
 
   // Send email alert to IT team
@@ -2100,19 +2132,29 @@ app.post("/api/recipient/deliver/:orderId", upload.single("photo"), (req, res) =
     const transporter = getSmtpTransporter();
     if (transporter) {
       const from = getSmtpFrom();
+      // Prefer a configured public base URL for the "view in tracker" link; fall back to the
+      // request host (only useful on the same network). The photo itself is attached inline
+      // below so it shows regardless of whether the link is reachable.
+      const baseUrl = (db.prepare("SELECT value FROM settings WHERE key = 'app_base_url'").get()?.value || "").replace(/\/$/, "");
       const proto = req.headers["x-forwarded-proto"] || req.protocol || "http";
       const host = req.headers["x-forwarded-host"] || req.get("host");
-      const photoUrl = photoId ? `${proto}://${host}/api/recipient/photo/${photoId}` : null;
+      const origin = baseUrl || `${proto}://${host}`;
+      const photoUrl = photoId ? `${origin}/api/recipient/photo/${photoId}` : null;
+      const attachments = photoBuffer
+        ? [{ filename: photoName, content: photoBuffer, contentType: photoMime, cid: "deliveryphoto" }]
+        : [];
       transporter.sendMail({
         from: from || '"IT Order Tracker" <noreply@localhost>',
         to: itEmails,
         subject: `Delivered: ${order.name}`,
+        attachments,
         html: `<div style="font-family:sans-serif;max-width:500px;padding:20px">
           <h2 style="color:#22c55e">Order Marked Delivered</h2>
-          <p><strong>${order.name}</strong> has been marked as delivered by <strong>${order.recipients || "a recipient"}</strong>.</p>
+          <p><strong>${order.name}</strong> has been marked as delivered.</p>
+          <p>Received by: <strong>${(receivedBy || "Not specified").replace(/</g, "&lt;")}</strong></p>
           ${order.quantity > 1 ? `<p>Quantity: ${order.quantity}</p>` : ""}
           ${note && note.trim() ? `<p style="background:#f1f5f9;border-left:3px solid #22c55e;padding:8px 12px;margin:10px 0;color:#334155"><em>${note.trim().replace(/</g, "&lt;")}</em></p>` : ""}
-          ${photoUrl ? `<p><a href="${photoUrl}"><img src="${photoUrl}" alt="Delivery photo" style="max-width:100%;border-radius:8px;border:1px solid #e2e8f0"/></a></p>` : ""}
+          ${photoBuffer ? `<p><img src="cid:deliveryphoto" alt="Delivery photo" style="max-width:100%;border-radius:8px;border:1px solid #e2e8f0"/></p>${photoUrl ? `<p style="font-size:12px"><a href="${photoUrl}">Open photo in browser</a></p>` : ""}` : ""}
           ${order.link ? `<p><a href="${order.link}">View Product</a></p>` : ""}
           <p style="color:#94a3b8;font-size:11px">IT Order Tracker</p>
         </div>`,
@@ -2120,7 +2162,7 @@ app.post("/api/recipient/deliver/:orderId", upload.single("photo"), (req, res) =
     }
   }
 
-  res.json({ success: true, photoId });
+  res.json({ success: true, photoId, received_by: receivedBy });
 });
 
 // Public delivery-photo viewer — anyone with the id can view (links are emailed to IT and

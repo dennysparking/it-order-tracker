@@ -337,12 +337,12 @@ export default function App() {
       {!loading && orders.length === 0 && <EmptyState />}
 
       {showForm && <OrderFormModal editOrder={editOrder} prefill={prefill} settings={settings} categories={categories} departments={departments}
-        onSave={handleSave} onClose={() => { setShowForm(false); setEditOrder(null); setPrefill(null); }} />}
+        onSave={handleSave} toast={toast} onClose={() => { setShowForm(false); setEditOrder(null); setPrefill(null); }} />}
 
       {viewOrder && <OrderDetailModal order={viewOrder} settings={settings} user={user}
         onAdvance={advanceOrder} onRevert={revertOrder} onDelete={handleDelete}
         onEdit={handleEdit} onArchive={handleArchive} onUnarchive={handleUnarchive}
-        onReorder={handleReorder} onRefresh={loadOrders}
+        onReorder={handleReorder} onRefresh={loadOrders} toast={toast}
         onClose={() => setViewOrder(null)} />}
 
       {showSettings && <SettingsModal settings={settings} user={user} categories={categories} departments={departments}

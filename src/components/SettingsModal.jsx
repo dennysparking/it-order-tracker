@@ -3,7 +3,12 @@ import { api } from '../api';
 import { S } from '../styles';
 
 export default function SettingsModal({ settings, user, categories = [], departments = [], onSave, onCategoriesChange, onDepartmentsChange, onClose }) {
-  const [values, setValues] = useState({ ...settings });
+  // categories/departments/schema_version share the settings table but have their own
+  // endpoints — keep them out of editable state so the generic Save never writes a stale copy.
+  const [values, setValues] = useState(() => {
+    const { categories: _c, departments: _d, schema_version: _v, ...rest } = settings;
+    return rest;
+  });
   const [tab, setTab] = useState("general");
   const [users, setUsers] = useState([]);
   const [catList, setCatList] = useState(categories);
@@ -234,6 +239,18 @@ export default function SettingsModal({ settings, user, categories = [], departm
                 <label style={S.label}>Notification Recipient</label>
                 <input style={S.input} value={values.notification_email || ""} onChange={e => set("notification_email", e.target.value)}
                   placeholder="you@company.com" />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={S.label}>IT Alert Emails (delivery alerts)</label>
+                <input style={S.input} value={values.it_alert_emails || ""} onChange={e => set("it_alert_emails", e.target.value)}
+                  placeholder="rob@company.com, dennis@company.com" />
+                <p style={{ fontSize: 11, color: "var(--text-dimmed)", marginTop: 4 }}>Who gets emailed when a recipient marks an item delivered. Comma-separated.</p>
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={S.label}>App URL (for links in emails)</label>
+                <input style={S.input} value={values.app_base_url || ""} onChange={e => set("app_base_url", e.target.value)}
+                  placeholder="http://it-tracker.copperworks.com  or  http://192.168.1.50:3000" />
+                <p style={{ fontSize: 11, color: "var(--text-dimmed)", marginTop: 4 }}>The address others use to reach this app on the network. Used for confirmation &amp; photo links in emails. Leave blank to use whatever address the order was created from (only works on this machine).</p>
               </div>
             </div>
             <div style={{ borderTop: "1px solid var(--border-primary)", paddingTop: 14, marginTop: 4 }}>

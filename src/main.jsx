@@ -9,13 +9,14 @@ import './styles/index.css';
 
 const path = window.location.pathname;
 const confirmMatch = path.match(/^\/confirm\/([^/]+)$/);
-const recipientMatch = path.match(/^\/recipient\/([^/]+)$/);
+// Single shared receiving page. Old per-name links (/recipient/Tami) still land here.
+const receivingMatch = /^\/(receiving|recipient)(\/.*)?$/.test(path);
 
 let root;
 if (confirmMatch) {
   root = <ConfirmPage token={confirmMatch[1]} />;
-} else if (recipientMatch) {
-  root = <RecipientPage name={decodeURIComponent(recipientMatch[1])} />;
+} else if (receivingMatch) {
+  root = <RecipientPage />;
 } else {
   root = (
     <ThemeProvider>
