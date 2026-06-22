@@ -2,7 +2,8 @@ version: "3.8"
 
 services:
   it-orders:
-    build: .
+    image: ghcr.io/dennysparking/it-order-tracker:latest
+    pull_policy: always
     container_name: it-order-tracker
     restart: unless-stopped
     ports:
