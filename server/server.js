@@ -1694,6 +1694,9 @@ async function getBrowser() {
   if (_browser && _browser.connected) return _browser;
   _browser = await puppeteer.launch({
     headless: true,
+    // In Docker we point at the Alpine system Chromium via this env var; locally it's
+    // unset, so Puppeteer falls back to its own downloaded browser.
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
   });
   return _browser;

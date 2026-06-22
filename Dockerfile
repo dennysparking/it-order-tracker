@@ -15,6 +15,13 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Chromium for Puppeteer's link-preview render fallback. Use Alpine's musl-built
+# chromium and skip Puppeteer's own (glibc) download, which can't run on Alpine.
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+ && ln -sf "$(command -v chromium || command -v chromium-browser)" /usr/bin/chromium-browser
+
 # Install build tools for better-sqlite3 + wget for healthcheck
 RUN apk add --no-cache python3 make g++
 
