@@ -3,7 +3,9 @@ FROM node:20-alpine AS frontend-build
 
 WORKDIR /build
 COPY package.json package-lock.json* ./
-RUN npm install
+# --legacy-peer-deps: @vitejs/plugin-react@4.x declares a stale peer range
+# (vite ^4-^7) while the project uses vite 8; the tree builds fine regardless.
+RUN npm install --legacy-peer-deps
 COPY src/ ./src/
 COPY index.html vite.config.js ./
 RUN npm run build
